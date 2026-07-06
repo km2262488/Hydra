@@ -1,3 +1,4 @@
+// Gunakan kode ini, ini adalah implementasi WaitGroup paling standar.
 package main
 
 import (
