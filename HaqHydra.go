@@ -260,15 +260,18 @@ func (am *AttackManager) openConnection(port int, limit int) {
 		tcpConn.SetKeepAlivePeriod(30 * time.Second)
 	}
 
+	// Panggil wg.Add(1) SEBELUM membuat goroutine.
+	am.wg.Add(1)
 	go func() {
-		am.wg.Add(1) // Panggil Add di awal goroutine
-		defer func() {
-			wg.Done() // Pastikan Done dipanggil saat goroutine keluar
-		}()
+		// Panggil wg.Done() SEGERA di dalam goroutine.
+		defer wg.Done() 
+		defer conn.Close()
 
+		// Pengecekan limit tetap di sini. Jika limit tercapai, goroutine return,
+		// dan defer wg.Done() akan menyeimbangkan wg.Add(1) sebelumnya.
 		if am.attackType == "http" && am.atomicGet(&activeConnections) >= uint64(limit) {
 			am.log("Connection limit (%d) reached for %s. Closing connection.", limit, address)
-			return // defer wg.Done() akan dieksekusi
+			return // defer wg.Done() akan dieksekusi.
 		}
 
 		am.atomicInc(&activeConnections)
